@@ -116,9 +116,24 @@ def capture_requests(url):
         logging.info(f"Navigating to {url}")
         page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
-        print("Browser opened. Interact with the page.")
+        stop_signal = threading.Event()
+
+        def wait_for_enter():
+            input()
+            stop_signal.set()
+
+        input_thread = threading.Thread(target=wait_for_enter, daemon=True)
+        input_thread.start()
+
+        print("\nBrowser opened. Interact with the page.")
         print("Press Enter in this terminal when done to save and exit...")
-        input()
+        while not stop_signal.is_set():
+            page.wait_for_timeout(500)
+            total = len(requests_log)
+            api = sum(1 for r in requests_log if r.get("resource_type") in ("xhr", "fetch"))
+            print(f"\rRequests captured: {total} (XHR/Fetch: {api})  ", end="", flush=True)
+
+        print()
 
         save_logs(url, requests_log)
 
