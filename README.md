@@ -96,4 +96,4 @@ All scripts support `-v` / `-vv` flags:
 
 ## License
 
-MIT
+[MIT](LICENSE)
