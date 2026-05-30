@@ -105,19 +105,17 @@ def extract_query_params(requests_group):
 
 
 def infer_response_schema(requests_group):
-    schema = {"type": "object"}
     for r in requests_group:
         body = r.get("response_body")
         if not body:
             continue
-        if isinstance(body, str) and body.startswith("{"):
+        if isinstance(body, str) and (body.startswith("{") or body.startswith("[")):
             try:
                 data = json.loads(body)
-                schema = infer_schema_from_value(data)
-                return schema
+                return infer_schema_from_value(data)
             except Exception:
                 pass
-    return schema
+    return None
 
 
 def infer_schema_from_value(value):
@@ -221,7 +219,7 @@ def build_openapi_spec(url, api_requests):
                     "description": f"Response with status {status}",
                 }
                 response_schema = infer_response_schema(group)
-                if response_schema.get("type") == "object" and response_schema.get("properties"):
+                if response_schema:
                     path_item["responses"][str(status)]["content"] = {
                         "application/json": {"schema": response_schema}
                     }
