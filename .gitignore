@@ -26,6 +26,7 @@ Thumbs.db
 # Generated output
 logs/
 specs/
+views/
 
 # Playwright
 ms-playwright/
