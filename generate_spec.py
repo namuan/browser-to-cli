@@ -10,47 +10,17 @@ Usage:
 ./generate_spec.py -v <path/to/log.json>   # Log INFO messages
 ./generate_spec.py -vv <path/to/log.json>  # Log DEBUG messages
 """
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
 import json
 import logging
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-
-def setup_logging(verbosity):
-    logging_level = logging.WARNING
-    if verbosity == 1:
-        logging_level = logging.INFO
-    elif verbosity >= 2:
-        logging_level = logging.DEBUG
-
-    logging.basicConfig(
-        handlers=[
-            logging.StreamHandler(),
-        ],
-        format="%(asctime)s - %(filename)s:%(lineno)d - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=logging_level,
-    )
-    logging.captureWarnings(capture=True)
-
-
-def parse_args():
-    parser = ArgumentParser(description=__doc__, formatter_class=RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        dest="verbose",
-        help="Increase verbosity of logging output",
-    )
-    parser.add_argument(
-        "log_file",
-        help="Path to the captured requests log file (JSON)",
-    )
-    return parser.parse_args()
+from cli_utils import ensure_output_dir, make_parser, safe_filename, setup_logging
 
 
 def is_api_request(entry):
@@ -82,12 +52,13 @@ def normalize_path_group(requests_group):
     paths = sorted({urlparse(r["url"]).path for r in requests_group})
     segments_list = [p.strip("/").split("/") for p in paths]
 
+    max_len = max(len(s) for s in segments_list) if segments_list else 0
     normalized = []
-    for i in range(len(segments_list[0])):
-        values = {s[i] if i < len(s) else "" for s in segments_list}
-        if len(values) > 1 or values == {""}:
+    for i in range(max_len):
+        values = {s[i] for s in segments_list if i < len(s)}
+        if len(values) > 1:
             normalized.append(f"{{param{i}}}")
-        else:
+        elif len(values) == 1:
             normalized.append(list(values)[0])
 
     return "/" + "/".join(normalized)
@@ -114,7 +85,7 @@ def infer_response_schema(requests_group):
                 data = json.loads(body)
                 return infer_schema_from_value(data)
             except Exception:
-                pass
+                logging.debug("Failed to parse response body as JSON", exc_info=True)
     return None
 
 
@@ -157,22 +128,21 @@ def build_openapi_spec(url, api_requests):
         parsed = urlparse(r["url"])
         base = f"{parsed.scheme}://{parsed.netloc}"
         path = parsed.path
-        key = f"{method}:{base}:{path}"
-        if key not in requests_by_key:
-            requests_by_key[key] = []
-        requests_by_key[key].append(r)
+        key = (method, base, path)
+        requests_by_key.setdefault(key, []).append(r)
 
     by_base = {}
-    for key, group in requests_by_key.items():
-        method, base, path = key.split(":", 2)
+    for (method, base, path), group in requests_by_key.items():
         if base not in by_base:
             by_base[base] = {}
         by_base[base][(method, path)] = group
 
+    parsed_url = urlparse(url) if url else None
+
     spec = {
         "openapi": "3.0.3",
         "info": {
-            "title": f"API Spec for {urlparse(url).netloc or 'unknown'}",
+            "title": f"API Spec for {parsed_url.netloc or 'unknown'}" if parsed_url else "API Spec",
             "version": datetime.now().strftime("%Y-%m-%d"),
             "description": f"Auto-generated from captured network traffic at {url}",
         },
@@ -180,36 +150,28 @@ def build_openapi_spec(url, api_requests):
         "paths": {},
     }
 
-    base_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}" if url and urlparse(url).scheme else ""
-    if base_url:
-        spec["servers"].append({"url": base_url})
+    if parsed_url and parsed_url.scheme:
+        primary = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        spec["servers"].append({"url": primary})
 
-    seen_servers = set()
-    for base, path_groups in by_base.items():
+    seen_servers = {s["url"] for s in spec["servers"]}
+    for base in by_base:
         if base not in seen_servers:
             spec["servers"].append({"url": base})
             seen_servers.add(base)
 
-        spec_paths = spec["paths"]
+    spec_paths = spec["paths"]
 
-        combined_by_norm = {}
+    for base, path_groups in by_base.items():
         for (method, path), group in path_groups.items():
-            norm_path = normalize_path_group(group)
-            combined_key = (method, norm_path)
-            if combined_key not in combined_by_norm:
-                combined_by_norm[combined_key] = group
-            else:
-                combined_by_norm[combined_key].extend(group)
-
-        for (method, norm_path), group in combined_by_norm.items():
-            if norm_path not in spec_paths:
-                spec_paths[norm_path] = {}
+            if path not in spec_paths:
+                spec_paths[path] = {}
 
             sorted_group = sorted(group, key=lambda r: r.get("status", 0), reverse=True)
-            best = sorted_group[0] if sorted_group else group[0]
+            best = sorted_group[0]
 
             path_item = {
-                "operationId": f"{method}_{norm_path.strip('/').replace('/', '_').replace('{', '').replace('}', '')}",
+                "operationId": f"{method}_{path.strip('/').replace('/', '_').replace('{', '').replace('}', '')}",
                 "responses": {},
             }
 
@@ -239,7 +201,7 @@ def build_openapi_spec(url, api_requests):
                     "content": {"application/json": {"schema": request_schema}}
                 }
 
-            spec_paths[norm_path][method] = path_item
+            spec_paths[path][method] = path_item
 
     return spec
 
@@ -257,13 +219,11 @@ def generate_spec(log_file):
 
     spec = build_openapi_spec(url, api_requests)
 
-    specs_dir = Path("specs")
-    specs_dir.mkdir(exist_ok=True)
+    ensure_output_dir("specs")
 
-    parsed = urlparse(url) if url else urlparse("localhost")
-    safe_name = parsed.netloc.replace(".", "_")[:50]
+    safe_name = safe_filename(url)
     captured_at = data.get("captured_at", datetime.now().strftime("%Y%m%d_%H%M%S"))
-    output_file = specs_dir / f"{safe_name}_{captured_at}.json"
+    output_file = Path("specs") / f"{safe_name}_{captured_at}.json"
 
     with open(output_file, "w") as f:
         json.dump(spec, f, indent=2)
@@ -276,6 +236,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    parser = make_parser("log_file", "Path to the captured requests log file (JSON)", __doc__)
+    args = parser.parse_args()
     setup_logging(args.verbose)
     main(args)

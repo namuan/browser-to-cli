@@ -12,50 +12,22 @@ Usage:
 ./capture_requests.py -v <url>   # Log INFO messages
 ./capture_requests.py -vv <url>  # Log DEBUG messages
 """
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
 import json
 import logging
-import os
 import threading
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from datetime import datetime
-from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-
-def setup_logging(verbosity):
-    logging_level = logging.WARNING
-    if verbosity == 1:
-        logging_level = logging.INFO
-    elif verbosity >= 2:
-        logging_level = logging.DEBUG
-
-    logging.basicConfig(
-        handlers=[
-            logging.StreamHandler(),
-        ],
-        format="%(asctime)s - %(filename)s:%(lineno)d - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=logging_level,
-    )
-    logging.captureWarnings(capture=True)
+from cli_utils import make_parser, safe_filename, setup_logging
 
 
-def parse_args():
-    parser = ArgumentParser(description=__doc__, formatter_class=RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        dest="verbose",
-        help="Increase verbosity of logging output",
-    )
-    parser.add_argument(
-        "url",
-        help="URL to capture network requests from",
-    )
-    return parser.parse_args()
+TEXT_TYPES = frozenset({"text", "json", "javascript", "css", "xml"})
 
 
 def save_logs(url, requests_log):
@@ -63,7 +35,7 @@ def save_logs(url, requests_log):
     logs_dir.mkdir(exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_name = url.split("//")[-1].replace("/", "_")[:50]
+    safe_name = safe_filename(url)
     output_file = logs_dir / f"{safe_name}_{timestamp}.json"
 
     with open(output_file, "w") as f:
@@ -74,8 +46,12 @@ def save_logs(url, requests_log):
 
 def capture_requests(url):
     requests_log = []
+    requests_by_url = {}
+    lock = threading.Lock()
+    xhr_fetch_count = 0
 
     def handle_request(request):
+        nonlocal xhr_fetch_count
         entry = {
             "method": request.method,
             "url": request.url,
@@ -85,26 +61,34 @@ def capture_requests(url):
             "timestamp": datetime.now().isoformat(),
         }
         logging.debug(f"Request: {request.method} {request.url}")
-        requests_log.append(entry)
+        with lock:
+            requests_log.append(entry)
+            requests_by_url.setdefault(request.url, []).append(entry)
+            if request.resource_type in ("xhr", "fetch"):
+                xhr_fetch_count += 1
 
     def handle_response(response):
-        for entry in reversed(requests_log):
-            if entry["url"] == response.url and "status" not in entry:
-                entry["status"] = response.status
-                entry["response_headers"] = dict(response.headers)
-                content_type = response.headers.get("content-type", "")
-                if any(t in content_type for t in ("text", "json", "javascript", "css", "xml")):
-                    try:
-                        entry["response_body"] = response.text()
-                    except Exception:
-                        entry["response_body"] = None
-                else:
-                    try:
-                        entry["response_body"] = f"<binary {len(response.body())} bytes>"
-                    except Exception:
-                        entry["response_body"] = None
-                logging.debug(f"Response: {response.status} {response.url}")
-                break
+        with lock:
+            candidates = requests_by_url.get(response.url, [])
+            for entry in reversed(candidates):
+                if "status" not in entry:
+                    entry["status"] = response.status
+                    entry["response_headers"] = dict(response.headers)
+                    content_type = response.headers.get("content-type", "")
+                    if any(t in content_type for t in TEXT_TYPES):
+                        try:
+                            entry["response_body"] = response.text()
+                        except Exception:
+                            logging.warning("Failed to read response text", exc_info=True)
+                            entry["response_body"] = None
+                    else:
+                        content_length = response.headers.get("content-length")
+                        if content_length:
+                            entry["response_body"] = f"<binary {content_length} bytes>"
+                        else:
+                            entry["response_body"] = "<binary unknown size>"
+                    logging.debug(f"Response: {response.status} {response.url}")
+                    break
 
     playwright = sync_playwright().start()
     try:
@@ -127,25 +111,27 @@ def capture_requests(url):
 
         print("\nBrowser opened. Interact with the page.")
         print("Press Enter in this terminal when done to save and exit...")
+        prev_total = 0
         while not stop_signal.is_set():
             page.wait_for_timeout(500)
-            total = len(requests_log)
-            api = sum(1 for r in requests_log if r.get("resource_type") in ("xhr", "fetch"))
-            print(f"\rRequests captured: {total} (XHR/Fetch: {api})  ", end="", flush=True)
+            with lock:
+                total = len(requests_log)
+                api = xhr_fetch_count
+            if total != prev_total:
+                print(f"\rRequests captured: {total} (XHR/Fetch: {api})  ", end="", flush=True)
+                prev_total = total
 
         print()
 
-        save_logs(url, requests_log)
+        with lock:
+            save_logs(url, requests_log)
 
         try:
             browser.close()
         except Exception:
-            pass
+            logging.warning("Failed to close browser", exc_info=True)
     finally:
-        timer = threading.Timer(3, lambda: os._exit(0))
-        timer.start()
         playwright.stop()
-        timer.cancel()
 
 
 def main(args):
@@ -153,6 +139,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    parser = make_parser("url", "URL to capture network requests from", __doc__)
+    args = parser.parse_args()
     setup_logging(args.verbose)
     main(args)

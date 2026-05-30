@@ -10,47 +10,15 @@ Usage:
 ./view_spec.py -v <path/to/spec.json>   # Log INFO messages
 ./view_spec.py -vv <path/to/spec.json>  # Log DEBUG messages
 """
-import json
-import logging
-import tempfile
-import webbrowser
-from argparse import ArgumentParser, RawDescriptionHelpFormatter
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
 
-def setup_logging(verbosity):
-    logging_level = logging.WARNING
-    if verbosity == 1:
-        logging_level = logging.INFO
-    elif verbosity >= 2:
-        logging_level = logging.DEBUG
+import logging
+import webbrowser
 
-    logging.basicConfig(
-        handlers=[
-            logging.StreamHandler(),
-        ],
-        format="%(asctime)s - %(filename)s:%(lineno)d - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=logging_level,
-    )
-    logging.captureWarnings(capture=True)
-
-
-def parse_args():
-    parser = ArgumentParser(description=__doc__, formatter_class=RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        dest="verbose",
-        help="Increase verbosity of logging output",
-    )
-    parser.add_argument(
-        "spec_file",
-        help="Path to the OpenAPI spec JSON file",
-    )
-    return parser.parse_args()
+from cli_utils import make_parser, setup_logging
 
 
 SWAGGER_UI_HTML = """<!DOCTYPE html>
@@ -81,19 +49,14 @@ SwaggerUIBundle({
 
 def view_spec(spec_file):
     spec_path = Path(spec_file)
-    with open(spec_path) as f:
-        spec_data = json.load(f)
-
-    spec_json = json.dumps(spec_data, indent=2)
-    html = SWAGGER_UI_HTML.replace("SPEC_PLACEHOLDER", spec_json)
+    spec_text = spec_path.read_text()
+    html = SWAGGER_UI_HTML.replace("SPEC_PLACEHOLDER", spec_text)
 
     output_dir = Path("views")
     output_dir.mkdir(exist_ok=True)
     output_file = output_dir / f"{spec_path.stem}.html"
 
-    with open(output_file, "w") as f:
-        f.write(html)
-
+    output_file.write_text(html)
     webbrowser.open(f"file://{output_file.resolve()}")
     print(f"Opened spec in browser: {output_file}")
 
@@ -103,6 +66,7 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = parse_args()
+    parser = make_parser("spec_file", "Path to the OpenAPI spec JSON file", __doc__)
+    args = parser.parse_args()
     setup_logging(args.verbose)
     main(args)
