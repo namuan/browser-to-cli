@@ -19,7 +19,7 @@ A command-line tool that captures all network requests from a website using Play
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/browser-to-cli.git
+git clone https://github.com/namuan/browser-to-cli.git
 cd browser-to-cli
 ```
 
