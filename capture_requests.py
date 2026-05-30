@@ -14,7 +14,7 @@ Usage:
 """
 import json
 import logging
-import sys
+import os
 import threading
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from datetime import datetime
@@ -127,11 +127,10 @@ def capture_requests(url):
         except Exception:
             pass
     finally:
-        t = threading.Thread(target=playwright.stop, daemon=True)
-        t.start()
-        t.join(timeout=3)
-        if t.is_alive():
-            sys.exit(0)
+        timer = threading.Timer(3, lambda: os._exit(0))
+        timer.start()
+        playwright.stop()
+        timer.cancel()
 
 
 def main(args):
