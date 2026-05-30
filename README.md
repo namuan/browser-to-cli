@@ -1,124 +1,99 @@
-# Browser to CLI - Network Request Capture
+# Browser to CLI - Network Request Capture & API Spec Generator
 
-A command-line tool that captures all network requests from a website using Playwright and Chromium. Perfect for analyzing web traffic, debugging API calls, or understanding resource loading patterns.
+A set of command-line tools to capture network requests from a website, generate OpenAPI specs from the captured traffic, and view the specs in a browser.
 
-## Features
+## Workflow
 
-- Captures all network requests (HTML, CSS, JS, images, fonts, XHR/fetch)
-- Records request/response headers, status codes, and response bodies
-- Handles JavaScript-rendered content
-- Saves output as structured JSON
-- Verbose logging modes for debugging
-
-## Prerequisites
-
-- Python 3.8+
-- [uv](https://github.com/astral-sh/uv) (fast Python package manager)
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/namuan/browser-to-cli.git
-cd browser-to-cli
+```
+capture_requests.py  →  generate_spec.py  →  view_spec.py
+     (capture)            (generate)           (view)
+     logs/*.json          specs/*.json        views/*.html
 ```
 
-2. Install Playwright browsers:
-```bash
-uv run --script capture_requests.py --help
-uv run python -m playwright install chromium
-```
+## Scripts
 
-## Usage
+### 1. Capture Network Requests
 
-Basic usage:
+Opens a visible Chromium browser so you can interact with the page. All network requests (including XHR/fetch) are captured in real time. Press Enter when done to save.
+
 ```bash
 ./capture_requests.py https://example.com
 ```
 
-With verbose logging:
-```bash
-./capture_requests.py -v https://example.com   # INFO level
-./capture_requests.py -vv https://example.com  # DEBUG level
+A live counter shows captured requests while you browse:
+```
+Browser opened. Interact with the page.
+Press Enter in this terminal when done to save and exit...
+Requests captured: 47 (XHR/Fetch: 12)
 ```
 
-### Command Line Options
+### 2. Generate OpenAPI Spec
 
-```
-positional arguments:
-  url            URL to capture network requests from
-
-options:
-  -h, --help     show this help message and exit
-  -v, --verbose  Increase verbosity of logging output
-```
-
-## Output
-
-Requests are saved to `logs/<domain>_<timestamp>.json` with the following structure:
-
-```json
-{
-  "url": "https://example.com",
-  "captured_at": "20260530_081851",
-  "requests": [
-    {
-      "method": "GET",
-      "url": "https://example.com/",
-      "resource_type": "document",
-      "headers": {...},
-      "post_data": null,
-      "timestamp": "2026-05-30T08:18:51.123456",
-      "status": 200,
-      "response_headers": {...},
-      "response_body": "<!DOCTYPE html>..."
-    }
-  ]
-}
-```
-
-### Captured Data
-
-For each request:
-- **method**: HTTP method (GET, POST, etc.)
-- **url**: Full request URL
-- **resource_type**: Type of resource (document, stylesheet, script, image, font, xhr, fetch, etc.)
-- **headers**: Request headers
-- **post_data**: POST body (if applicable)
-- **status**: HTTP response status code
-- **response_headers**: Response headers
-- **response_body**: Response body (text for text-based content, size indicator for binary)
-
-## Example
+Takes a captured log file and generates an OpenAPI 3.0 spec from the API calls found in it.
 
 ```bash
-$ ./capture_requests.py https://news.ycombinator.com
-Captured 47 requests -> logs/news.ycombinator.com_20260530_120000.json
+./generate_spec.py logs/example.com_20260530_120000.json
 ```
 
-## Troubleshooting
+Output: `specs/<domain>_<timestamp>.json`
 
-### Browser crashes with SEGV or permission errors
+### 3. View Spec in Browser
 
-On macOS, you may need to grant Full Disk Access to your terminal:
-1. System Preferences → Privacy & Security → Full Disk Access
-2. Add your terminal app (Terminal, iTerm2, etc.)
+Opens the generated OpenAPI spec in Swagger UI.
 
-### Playwright browser not found
-
-Install the browser:
 ```bash
+./view_spec.py specs/example_com_20260530_120000.json
+```
+
+Output: `views/<spec_name>.html` (opens automatically in your browser)
+
+## Prerequisites
+
+- Python 3.8+
+- [uv](https://github.com/astral-sh/uv)
+- Playwright Chromium browser
+
+## Installation
+
+```bash
+git clone https://github.com/namuan/browser-to-cli.git
+cd browser-to-cli
+uv run --script capture_requests.py --help
 uv run python -m playwright install chromium
 ```
 
-### Network errors
+## Full Example
 
-Ensure you have internet connectivity and the URL is accessible.
+```bash
+# 1. Capture traffic from a site (interact with the page, then press Enter)
+./capture_requests.py https://some-site.com
+# Captured 83 requests -> logs/some-site.com_20260530_120000.json
+
+# 2. Generate OpenAPI spec from the captured log
+./generate_spec.py logs/some-site.com_20260530_120000.json
+# Generated OpenAPI spec with 8 paths -> specs/some-site_com_20260530_120000.json
+
+# 3. View the spec in your browser
+./view_spec.py specs/some-site_com_20260530_120000.json
+# Opened spec in browser: views/some-site_com_20260530_120000.html
+```
+
+## Verbose Logging
+
+All scripts support `-v` / `-vv` flags:
+
+```bash
+./capture_requests.py -v https://example.com    # INFO
+./capture_requests.py -vv https://example.com   # DEBUG
+./generate_spec.py -vv logs/example.json
+./view_spec.py -v specs/example.json
+```
+
+## Tips
+
+- **No XHR/Fetch requests captured?** Interact more with the page — click tabs, scroll, navigate — to trigger API calls. The live counter helps you see when they come in.
+- **Empty spec (0 paths)?** The captured session may not have triggered any API calls. Try a more interactive session.
 
 ## License
 
 MIT
-
-## Contributing
-
-Issues and pull requests welcome!
