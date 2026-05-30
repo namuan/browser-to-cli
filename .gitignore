@@ -23,8 +23,9 @@ env/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Generated output
 logs/
+specs/
 
 # Playwright
 ms-playwright/
