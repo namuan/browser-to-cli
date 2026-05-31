@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Browser to CLI",
+  "version": "1.0",
+  "description": "Streams XHR/fetch traffic from any page to the browser-to-cli tool.",
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
